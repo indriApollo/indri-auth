@@ -1,0 +1,5 @@
+{
+    "SMTP_SERVER": "smtp.gmail.com",
+    "SMTP_USER": "foo@gmail.com",
+    "SMTP_PASSWORD": "bar"
+}
