@@ -71,5 +71,12 @@ module.exports = {
             if(err) console.log(err);
             callback([err]);
         })
+    },
+
+    storeUserHashInDb: function(db, uid, hash, callback) {
+        db.run("UPDATE users SET hash = ? WHERE uid = ?", hash, uid, function(err) {
+            if(err) console.log(err);
+            callback([err]);
+        })
     }
 }

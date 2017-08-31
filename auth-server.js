@@ -48,6 +48,9 @@ const GET_DEFAULT_RESPONSE = setVal("GET_DEFAULT_RESPONSE", {
     "doc": "https://github.com/indriApollo/indri-auth"
 });
 
+const USERPASS_MIN_BYTELENGTH = setVal("USERPASS_MIN_BYTELENGTH", 12);
+const BCRYPT_SALT_SIZE = setVal("BCRYPT_SALT_SIZE", 16);
+
 const NODEMAILER_FROM = setVal("NODEMAILER_FROM", 'no-reply@indriapollo.be');
 const NODEMAILER_SUBJECT = setVal("NODEMAILER_SUBJECT", "Password reset | %domain%");
 const text = "You made a request for a new password on '%domain%'\r\nVisit this link to set a new password : %url%\r\n";
@@ -192,7 +195,7 @@ function handlePOST(url, headers, body, response) {
     
     console.log("POST request for "+url);
     
-    var matches = url.match(/^\/(authenticate|passresetrequest)$/);
+    var matches = url.match(/^\/(authenticate|passreset(\/request)?)$/);
     if(!matches) {
         // Wrong uri -> complain
         respond(response, "Unknown POST uri", 404);
@@ -249,72 +252,121 @@ function handlePOST(url, headers, body, response) {
             });
         });
     }
-    else if(matches[1] == "passresetrequest") {
+    else if(matches[1] == "passreset/request") {
         
-                function sendPassResetEmail(uid, email, domain, url) {
-                    var token = crypto.randomBytes(TOKEN_BYTE_LENGTH).toString("base64");
-                    var validity = Date.now() + TOKEN_VALIDITY_MS;
+        function sendPassResetEmail(uid, email, domain, url) {
+            var token = crypto.randomBytes(TOKEN_BYTE_LENGTH).toString("base64");
+            console.log("reset token "+token);
+            var validity = Date.now() + TOKEN_VALIDITY_MS;
         
-                    url+="#"+token;
+            url+="#"+token;
         
-                    dbRequestHandler(dbops.storeTokenInDb, ["passreset",uid,token,validity], function(err) {
-                        if(err)
+            dbRequestHandler(dbops.storeTokenInDb, ["passreset",uid,token,validity], function(err) {
+                if(err)
+                    respond(response, "Internal service error", 500);
+                else {
+                    console.log("Sending passreset to "+email);
+                    smtp.sendMail({
+                        from: NODEMAILER_FROM,
+                        to: email,
+                        subject: NODEMAILER_SUBJECT.replace(/%domain%/g, domain),
+                        text: NODEMAILER_TEXT.replace(/%domain%/g, domain).replace(/%url%/g, url)
+                    }, function(err, info) {
+                        console.log(info);
+                        if(err) {
+                            console.log("Could not send email");
+                            console.log(err);
                             respond(response, "Internal service error", 500);
-                        else {
-                            console.log("Sending passreset to "+email);
-                            smtp.sendMail({
-                                from: NODEMAILER_FROM,
-                                to: email,
-                                subject: NODEMAILER_SUBJECT.replace(/%domain%/g, domain),
-                                text: NODEMAILER_TEXT.replace(/%domain%/g, domain).replace(/%url%/g, url)
-                            }, function(err, info) {
-                                console.log(info);
-                                if(err) {
-                                    console.log("Could not send email");
-                                    console.log(err);
-                                    respond(response, "Internal service error", 500);
-                                }
-                                else if(!info.accepted || !info.accepted[0] == email) {
-                                    console.log(info);
-                                    respond(response, "Email was rejected", 500);
-                                }
-                                else
-                                    respond(response, {"message": "Email successfully sent"}, 200);
-                            });
                         }
-                            
+                        else if(!info.accepted || !info.accepted[0] == email) {
+                            console.log(info);
+                            respond(response, "Email was rejected", 500);
+                        }
+                        else
+                            respond(response, {"message": "Email successfully sent"}, 200);
                     });
-                }
+                }                    
+            });
+        }
         
-                var checkedJson = checkJson(body, ["email","domain"]);
+        var checkedJson = checkJson(body, ["email","domain"]);
                 
+        if(checkedJson.error) {
+            respond(response, checkedJson.error, 400);
+            return;
+        }
+        var email = checkedJson.jsonData.email;
+        var domain = checkedJson.jsonData.domain;
+    
+        checkUserExists(email, function(err, exists, uid) {
+            if(err) {
+                console.log("Could not check user's existence");
+                respond(response, "Internal service error", 500);
+            }
+            else if(!exists)
+                respond(response, "Unknown user", 400);
+            else
+                getPassResetUrl(domain, function(err, url) {
+                    if(err) {
+                        console.log("Could not get pass reset url");
+                        respond(response, "Internal service error", 500);
+                    }
+                    else if(!url)
+                        respond(response, "Unknown domain", 400);
+                    else
+                        sendPassResetEmail(uid, email, domain, url);
+                });
+        });
+    }
+    else if(matches[1] == "passreset") {
+        if(!headers["auth-token"]) {
+            respond(response, "Missing Auth-Token header", 400);
+            return;
+        }
+        var token = headers["auth-token"];
+
+        checkToken("passreset", token, function(err, valid, uid) {
+            if(err) {
+                console.log("Could not check passreset token");
+                respond(response, "Internal service error", 500);
+            }
+            else if(!valid) {
+                setTimeout(function () {
+                    respond(response, "Unknown or expired token", 403);
+                }, INVALID_PASS_MS_DELAY);
+            }
+            else {
+                var checkedJson = checkJson(body, ["password"]);
                 if(checkedJson.error) {
                     respond(response, checkedJson.error, 400);
                     return;
                 }
-                var email = checkedJson.jsonData.email;
-                var domain = checkedJson.jsonData.domain;
-        
-                checkUserExists(email, function(err, exists, uid) {
+                var password = checkedJson.jsonData.password;
+
+                if(typeof password !== 'string' || password.length < USERPASS_MIN_BYTELENGTH) {
+                    respond(response, "New password is invalid or too short", 400);
+                }
+                console.log("gonna salt");
+                bcrypt.hash(password, BCRYPT_SALT_SIZE, function(err, hash) {
                     if(err) {
-                        console.log("Could not check user's existence");
+                        console.log("Could not generate bcrypt hash");
                         respond(response, "Internal service error", 500);
                     }
-                    else if(!exists)
-                        respond(response, "Unknown user", 400);
-                    else
-                        getPassResetUrl(domain, function(err, url) {
+                    else {
+                        console.log("gonna store");
+                        dbRequestHandler(dbops.storeUserHashInDb, [uid, hash], function(err) {
                             if(err) {
-                                console.log("Could not get pass reset url");
+                                console.log("Could not store new user hash");
                                 respond(response, "Internal service error", 500);
                             }
-                            else if(!url)
-                                respond(response, "Unknown domain", 400);
                             else
-                                sendPassResetEmail(uid, email, domain, url);
+                                respond(response, "New password succesfully created", 201);
                         });
+                    }
                 });
             }
+        });
+    }
 }
 
 function handleGET(url, headers, body, response) {
@@ -335,7 +387,7 @@ function handleGET(url, headers, body, response) {
         checkToken("tokens", token, function(err, valid, uid) {
 
             if(err) {
-                console.log("Could not check token");
+                console.log("Could not check user token");
                 respond(response, "Internal service error", 500);
             }
             else if(!valid) {
