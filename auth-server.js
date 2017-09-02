@@ -136,7 +136,8 @@ function respond(response, data, status) {
     
     // We pretty print the json data and store it in  an utf-8 buffer
     // Storing it in a buffer means that we can easily gzip it later
-    var buf = Buffer.from(JSON.stringify(data, null, 4), 'utf-8');
+    if(typeof data !== 'string') data = JSON.stringify(data, null, 4);
+    var buf = Buffer.from(data, 'utf-8');
     
     response.statusCode = status;
     response.setHeader('Access-Control-Allow-Origin', '*');
@@ -174,7 +175,7 @@ function handlePOST(url, headers, body, response) {
 
 function handleAuthentication(headers, json, response) {
 
-    var checkedJson = checkJson(body, ["username","password"]);
+    var checkedJson = checkJson(json, ["username","password"]);
 
     if(checkedJson.error) {
         respond(response, checkedJson.error, 400);
@@ -224,7 +225,7 @@ function handleAuthentication(headers, json, response) {
 
 function handlePassResetRequest(headers, json, response) {
     
-    var checkedJson = checkJson(body, ["email","domain"]);
+    var checkedJson = checkJson(json, ["email","domain"]);
             
     if(checkedJson.error) {
         respond(response, checkedJson.error, 400);
@@ -233,7 +234,7 @@ function handlePassResetRequest(headers, json, response) {
     var email = checkedJson.jsonData.email;
     var domain = checkedJson.jsonData.domain;
 
-    dbRequestHandler(dbops.getUserUidFromDb, [username], function(err, uid) {
+    dbRequestHandler(dbops.getUserUidFromDb, [email], function(err, uid) {
         if(err) {
             console.log("Could not check user's existence");
             respond(response, "Internal service error", 500);
@@ -267,11 +268,11 @@ function handlePassResetRequest(headers, json, response) {
             if(err)
                 respond(response, "Internal service error", 500);
             else
-                sendPassResetEmail();                  
+                sendPassResetEmail(url);                  
         });
     }
 
-    function sendPassResetEmail() {
+    function sendPassResetEmail(url) {
         console.log("Sending passreset to "+email);
         smtp.sendMail({
             from: NODEMAILER_FROM,
@@ -328,10 +329,21 @@ function saveNewUserPassword(headers, json, response) {
             respond(response, "New password is invalid or too short", 400);
         }
         else
-            generateHash(uid);
+            nukeUsedResetToken(uid, password);
     }
 
-    function generateHash(uid) {
+    function nukeUsedResetToken(uid, password) {
+        dbRequestHandler(dbops.storeTokenInDb, ["passreset", uid, "xxx", 0], function(err) {
+            if(err) {
+                console.log("Could not nuke used resetToken");
+                respond(response, "Internal service error", 500);
+            }
+            else
+                generateHash(uid, password);
+        });
+    }
+
+    function generateHash(uid, password) {
         bcrypt.hash(password, BCRYPT_SALT_SIZE, function(err, hash) {
             if(err) {
                 console.log("Could not generate bcrypt hash");
@@ -370,7 +382,7 @@ function handleGET(url, headers, body, response) {
     }
 }
 
-function returnUserData() {
+function returnUserData(headers, response) {
 
     if(!headers["auth-token"]) {
         respond(response, "Missing Auth-Token header", 400);

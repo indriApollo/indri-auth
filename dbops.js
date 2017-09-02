@@ -68,6 +68,7 @@ module.exports = {
 
     storeTokenInDb: function(db, table, uid, token, validity, callback) {
         db.run("UPDATE "+table+" SET token = ?, validity = ? WHERE uid = ?", token, validity, uid, function(err) {
+            if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
             if(err) console.log(err);
             callback([err]);
         })
@@ -75,6 +76,7 @@ module.exports = {
 
     storeUserHashInDb: function(db, uid, hash, callback) {
         db.run("UPDATE users SET hash = ? WHERE uid = ?", hash, uid, function(err) {
+            if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
             if(err) console.log(err);
             callback([err]);
         })
