@@ -139,14 +139,21 @@ function respond(response, data, status) {
     if(typeof data !== 'string') data = JSON.stringify(data, null, 4);
     var buf = Buffer.from(data, 'utf-8');
     
-    response.statusCode = status;
     response.setHeader('Access-Control-Allow-Origin', '*');
-    response.setHeader('Content-Encoding', 'gzip');
-    response.setHeader('Content-Type', 'application/json');
-    
-    zlib.gzip(buf, function (_, result) {
-        response.setHeader('Content-Length',result.length);
-        response.end(result);
+
+    zlib.gzip(buf, function (err, result) {
+        if(err) {
+            console.log("Could not gzip response", err);
+            response.statusCode = 500;
+            response.end();
+        }
+        else {
+            response.statusCode = status;
+            response.setHeader('Content-Encoding', 'gzip');
+            response.setHeader('Content-Type', 'application/json');
+            response.setHeader('Content-Length',result.length);
+            response.end(result);
+        }
     });
 }
 
@@ -189,7 +196,7 @@ function handleAuthentication(headers, json, response) {
         if(err)
             respond(response, "Internal service error", 500);
         if(!uid || !hash)
-            respond(response, "Unknown user "+username, 400);
+            respond(response, "Unknown user "+username, 403);
         else 
             checkBcryptHash(uid , hash);
     });
