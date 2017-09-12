@@ -34,6 +34,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const sqlite3 = require('sqlite3');
 const nodemailer = require("nodemailer");
+const urlHelper = require('url');
 
 const dbops = require("./dbops.js");
 
@@ -159,28 +160,29 @@ function respond(response, data, status) {
 
 function handlePOST(url, headers, body, response) {
     
-    console.log("POST request for "+url);
-    
-    var matches = url.match(/^\/(authenticate|passreset(\/request)?)$/);
-    if(!matches) {
-        // Wrong uri -> complain
-        respond(response, "Unknown POST uri", 404);
-        return;
-    }
-    switch(matches[1]) {
-        case "authenticate":
-            handleAuthentication(headers, body, response);
+    url = urlHelper.parse(url);
+    var pathname = url.pathname;
+
+    console.log("POST request for "+pathname);
+
+    switch(pathname) {
+        case "/authenticate":
+            handleAuthentication(body, response);
             break;
-        case "passreset/request":
-            handlePassResetRequest(headers, body, response);;
+        case "/passreset/request":
+            // user asked for a reset email
+            handlePassResetRequest(body, response);
             break;
-        case "passreset":
+        case "/passreset":
             saveNewUserPassword(headers, body, response);
+            break;
+        default:
+            respond(response, "Unknown POST uri", 404);
             break;
     }
 }
 
-function handleAuthentication(headers, json, response) {
+function handleAuthentication(json, response) {
 
     var checkedJson = checkJson(json, ["username","password"]);
 
@@ -230,7 +232,7 @@ function handleAuthentication(headers, json, response) {
     }
 }
 
-function handlePassResetRequest(headers, json, response) {
+function handlePassResetRequest(json, response) {
     
     var checkedJson = checkJson(json, ["email","domain"]);
             
@@ -241,7 +243,7 @@ function handlePassResetRequest(headers, json, response) {
     var email = checkedJson.jsonData.email;
     var domain = checkedJson.jsonData.domain;
 
-    dbRequestHandler(dbops.getUserUidFromDb, [email], function(err, uid) {
+    dbRequestHandler(dbops.getUserUidUsingUsernameFromDb, [email], function(err, uid) {
         if(err) {
             console.log("Could not check user's existence");
             respond(response, "Internal service error", 500);
@@ -269,7 +271,7 @@ function handlePassResetRequest(headers, json, response) {
     function generatePassResetToken(uid, url) {
         var token = crypto.randomBytes(TOKEN_BYTE_LENGTH).toString("base64");
         var validity = Date.now() + TOKEN_VALIDITY_MS;
-        url+="#"+token;
+        url+="#"+encodeURIComponent(token); // we encode to token to avoid problems with special chars in the url like +
     
         dbRequestHandler(dbops.storeTokenInDb, ["passreset",uid,token,validity], function(err) {
             if(err)
@@ -304,12 +306,12 @@ function handlePassResetRequest(headers, json, response) {
 function saveNewUserPassword(headers, json, response) {
 
     if(!headers["auth-token"]) {
-        respond(response, "Missing Auth-Token header", 400);
+        respond(response, "Missing Auth-Token header", 403);
         return;
     }
     var token = headers["auth-token"];
 
-    checkToken("passreset", token, function(err, valid, uid) {
+    checkToken("passreset", token, false, function(err, valid, uid) {
         if(err) {
             console.log("Could not check passreset token");
             respond(response, "Internal service error", 500);
@@ -375,30 +377,23 @@ function saveNewUserPassword(headers, json, response) {
 
 function handleGET(url, headers, body, response) {
     
-    console.log("GET request for "+url);
-    
-    var matches = url.match(/^\/(userdata)$/);
-    if(!matches) {
-        respond(response, GET_DEFAULT_RESPONSE, 200);
-        return
-    }
-    switch(matches[1]) {
-        case "userdata":
-            returnUserData(headers, response);
-            break;
-    }
-}
+    url = urlHelper.parse(url);
+    var pathname = url.pathname;
 
-function returnUserData(headers, response) {
+    console.log("GET request for "+pathname);
+
+    if(pathname == "/") {
+        respond(response, GET_DEFAULT_RESPONSE, 200);
+        return;
+    }
 
     if(!headers["auth-token"]) {
-        respond(response, "Missing Auth-Token header", 400);
+        respond(response, "Missing Auth-Token header", 403);
         return;
     }
     var token = headers["auth-token"];
 
-    checkToken("tokens", token, function(err, valid, uid) {
-
+    checkToken("users", token, true, function(err, valid, uid) {
         if(err) {
             console.log("Could not check user token");
             respond(response, "Internal service error", 500);
@@ -408,31 +403,69 @@ function returnUserData(headers, response) {
                 respond(response, "Unknown or expired token", 403);
             }, INVALID_PASS_MS_DELAY);
         }
-        else
-            deliverUserData(uid);
-    });
-
-    function deliverUserData(uid) {
-        dbRequestHandler(dbops.getUserDataFromDb, [uid], function(err, userData) {
-            if(err || !userData) {
-                console.log("Could not fetch userdata");
-                respond(response, "Internal service error", 500);
+        else {
+            switch(pathname) {
+                case "/userstatus":
+                    response(response, "Authenticated", 200);
+                    break;
+                case "/userdata":
+                    returnUserData(uid, response);
+                    break;
+                case "unauthenticate":
+                    unauthUser(token, response);
+                    break;
+                default:
+                    respond(response, "Unknown GET uri", 404);
             }
-            else
-                respond(response, userData, 200);
-        });
-    }
+        }
+    });
 }
 
-function checkToken(table, token, callback) {
+function unauthUser(token, response) {
+    // Set the validity to zero. Checktoken will then always fail.
+    dbRequestHandler(dbops.storeUserTokenValidityInDb, [token, 0], function(err) {
+        if(err) {
+            console.log("Could not unauthenticate user", err);
+            respond(response, "Internal service error", 500);
+        }
+        else
+            respond(reponse, "Goodbye", 200);
+    });
+
+}
+
+function returnUserData(uid, response) {
+    dbRequestHandler(dbops.getUserDataFromDb, [uid], function(err, userData) {
+        if(err || !userData) {
+            console.log("Could not fetch userdata");
+            respond(response, "Internal service error", 500);
+        }
+        else
+            respond(response, userData, 200);
+    });
+}
+
+function checkToken(table, token, extendValidity, callback) {
     dbRequestHandler(dbops.getTokenValidityFromDb, [table,token], function(err, validity, uid) {
         if(err)
             callback(err);
         else if(!validity || (validity < Date.now()) )
             callback(null, false);
-        else
+        else if(!extendValidity)
             callback(null, true, uid);
+        else
+            extendTokenValidity(uid);
     });
+
+    function extendTokenValidity(uid) {
+        var validity = Date.now() + TOKEN_VALIDITY_MS;
+        dbRequestHandler(dbops.storeUserTokenValidityInDb, [token, validity], function(err) {
+            if(err)
+                callback(err);
+            else
+                callback(null, true, uid);
+        });
+    }
 }
 
 function dbRequestHandler(func, funcArgs, callback) {

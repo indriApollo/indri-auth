@@ -53,7 +53,7 @@ module.exports = {
         });
     },
 
-    getUserUidFromDb: function(db, username, callback) {
+    getUserUidUsingUsernameFromDb: function(db, username, callback) {
         db.get("SELECT uid FROM users WHERE username = ?", username, function(err, row) {
             if(err) {
                 console.log(err);
@@ -76,6 +76,14 @@ module.exports = {
 
     storeUserHashInDb: function(db, uid, hash, callback) {
         db.run("UPDATE users SET hash = ? WHERE uid = ?", hash, uid, function(err) {
+            if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
+            if(err) console.log(err);
+            callback([err]);
+        })
+    },
+
+    storeUserTokenValidityInDb: function(db, token, validity, callback) {
+        db.run("UPDATE tokens SET validity = ? WHERE token = ?", validity, token, function(err) {
             if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
             if(err) console.log(err);
             callback([err]);

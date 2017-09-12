@@ -2,6 +2,7 @@ create table users(
     uid integer primary key autoincrement,
     username varchar(255) not null,
     hash varchar(255) not null,
+    admin int not null,
     CONSTRAINT username_unique UNIQUE (username)
 );
 
@@ -20,8 +21,7 @@ create table usersdata(
 create table passreset(
     uid integer primary key,
     token varchar(255),
-    validity integer,
-    CONSTRAINT token_unique UNIQUE (token)
+    validity integer
 );
 
 create table trustedurls(
