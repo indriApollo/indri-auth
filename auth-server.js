@@ -1,33 +1,5 @@
 #!/usr/bin/env node
 
-const fs = require("fs");
-
-// load config.json
-try {
-    var confFile = fs.readFileSync("config.json","utf8");
-    var config = JSON.parse(confFile);
-}
-catch(err) {
-    console.log("Could not read configuration from config.json");
-    console.log(err);
-    return;
-}
-
-// set default if value was not set in config
-function setVal(confKey, defaultValue) {
-    var val;
-    if(typeof config[confKey] !== "undefined")
-        val = config[confKey];
-    else
-        val = defaultValue;
-
-    if(confKey.match(/password/i))
-        console.log("[config] "+confKey+" -> ********");
-    else
-        console.log("[config] "+confKey+" ->", val);
-    return val;
-}
-
 const http = require('http'); // no https because we are behind a proxy
 const zlib = require('zlib');
 const bcrypt = require('bcrypt');
@@ -37,33 +9,18 @@ const nodemailer = require("nodemailer");
 const urlHelper = require('url');
 
 const dbops = require("./dbops.js");
+const conf = require("./configloader.js");
 
-const DB_NAME = setVal("DB_NAME", "indri-auth.db");
-const SERVER_PORT = setVal("SERVER_PORT", 8000);
-
-const INVALID_PASS_MS_DELAY = setVal("INVALID_PASS_MS_DELAY", 3000);
-const TOKEN_BYTE_LENGTH = setVal("TOKEN_BYTE_LENGTH", 33); //264 bits, no base64 = padding
-const TOKEN_VALIDITY_MS = setVal("TOKEN_VALIDITY_MS", 60 * 60 * 1000); // 1 hour
-const GET_DEFAULT_RESPONSE = setVal("GET_DEFAULT_RESPONSE", {
-    "message": "Welcome on the indri-auth service",
-    "doc": "https://github.com/indriApollo/indri-auth"
-});
-
-const USERPASS_MIN_BYTELENGTH = setVal("USERPASS_MIN_BYTELENGTH", 12);
-const BCRYPT_SALT_SIZE = setVal("BCRYPT_SALT_SIZE", 16);
-
-const NODEMAILER_FROM = setVal("NODEMAILER_FROM", 'no-reply@indriapollo.be');
-const NODEMAILER_SUBJECT = setVal("NODEMAILER_SUBJECT", "Password reset | %domain%");
-const text = "You made a request for a new password on '%domain%'\r\nVisit this link to set a new password : %url%\r\n";
-const NODEMAILER_TEXT = setVal("NODEMAILER_TEXT", text);
+console.log("Loading config ...");
+conf.load();
 
 const smtp = nodemailer.createTransport({
-    host: setVal("SMTP_SERVER", ""),
-    port: setVal("SMTP_PORT", 587),
+    host: conf.get("SMTP_SERVER"),
+    port: conf.get("SMTP_PORT"),
     secure: false, // upgrade later with STARTTLS
     auth: {
-        user: setVal("SMTP_USER", ""),
-        pass: setVal("SMTP_PASSWORD", "")
+        user: conf.get("SMTP_USER"),
+        pass: conf.get("SMTP_PASSWORD")
     }
 });
 
@@ -106,8 +63,8 @@ http.createServer(function(request, response) {
                 break;
         }
     });
-}).listen(SERVER_PORT);
-console.log("server listening on port "+SERVER_PORT);
+}).listen(conf.get("SERVER_PORT"));
+console.log("server listening on port "+conf.get("SERVER_PORT"));
 
 function handleCORS(response) {
     
@@ -165,6 +122,12 @@ function handlePOST(url, headers, body, response) {
 
     console.log("POST request for "+pathname);
 
+
+    if(/^\/userdata\/[\w%.@]*$/.test(pathname)) {
+        saveNewUserdata(response, pathname, headers, body);
+        return;
+    }
+
     switch(pathname) {
         case "/authenticate":
             handleAuthentication(body, response);
@@ -212,7 +175,7 @@ function handleAuthentication(json, response) {
             else if(!valid){
                 setTimeout(function () {
                     respond(response, "Wrong password", 403);
-                }, INVALID_PASS_MS_DELAY);
+                }, conf.get("INVALID_PASS_MS_DELAY"));
             }
             else
                 deliverToken(uid);
@@ -220,8 +183,8 @@ function handleAuthentication(json, response) {
     }
 
     function deliverToken(uid) {
-        var token = crypto.randomBytes(TOKEN_BYTE_LENGTH).toString("base64");
-        var validity = Date.now() + TOKEN_VALIDITY_MS;
+        var token = crypto.randomBytes(conf.get("TOKEN_BYTE_LENGTH")).toString("base64");
+        var validity = Date.now() + conf.get("TOKEN_VALIDITY_MS");
 
         dbRequestHandler(dbops.storeTokenInDb, ["tokens",uid,token,validity], function(err) {
             if(err)
@@ -269,7 +232,7 @@ function handlePassResetRequest(json, response) {
     }
 
     function generatePassResetToken(uid, url) {
-        var token = crypto.randomBytes(TOKEN_BYTE_LENGTH).toString("base64");
+        var token = crypto.randomBytes(conf.get("TOKEN_BYTE_LENGTH")).toString("base64");
         var validity = Date.now() + TOKEN_VALIDITY_MS;
         url+="#"+encodeURIComponent(token); // we encode to token to avoid problems with special chars in the url like +
     
@@ -284,10 +247,10 @@ function handlePassResetRequest(json, response) {
     function sendPassResetEmail(url) {
         console.log("Sending passreset to "+email);
         smtp.sendMail({
-            from: NODEMAILER_FROM,
+            from: conf.get("NODEMAILER_FROM"),
             to: email,
-            subject: NODEMAILER_SUBJECT.replace(/%domain%/g, domain),
-            text: NODEMAILER_TEXT.replace(/%domain%/g, domain).replace(/%url%/g, url)
+            subject: conf.get("NODEMAILER_SUBJECT").replace(/%domain%/g, domain),
+            text: conf.get("NODEMAILER_TEXT").replace(/%domain%/g, domain).replace(/%url%/g, url)
         }, function(err, info) {
             if(err) {
                 console.log("Could not send email", err);
@@ -319,7 +282,7 @@ function saveNewUserPassword(headers, json, response) {
         else if(!valid) {
             setTimeout(function () {
                 respond(response, "Unknown or expired token", 403);
-            }, INVALID_PASS_MS_DELAY);
+            }, conf.get(INVALID_PASS_MS_DELAY));
         }
         else {
             checkPasswordFromJson(uid);
@@ -334,7 +297,7 @@ function saveNewUserPassword(headers, json, response) {
         }
         var password = checkedJson.jsonData.password;
 
-        if(typeof password !== 'string' || password.length < USERPASS_MIN_BYTELENGTH) {
+        if(typeof password !== 'string' || password.length < conf.get("USERPASS_MIN_BYTELENGTH")) {
             respond(response, "New password is invalid or too short", 400);
         }
         else
@@ -353,7 +316,7 @@ function saveNewUserPassword(headers, json, response) {
     }
 
     function generateHash(uid, password) {
-        bcrypt.hash(password, BCRYPT_SALT_SIZE, function(err, hash) {
+        bcrypt.hash(password, conf.get("BCRYPT_SALT_SIZE"), function(err, hash) {
             if(err) {
                 console.log("Could not generate bcrypt hash");
                 respond(response, "Internal service error", 500);
@@ -375,6 +338,81 @@ function saveNewUserPassword(headers, json, response) {
     }
 }
 
+function saveNewUserdata(response, pathname, headers, body) {
+
+    if(!headers["auth-token"]) {
+        respond(response, "Missing Auth-Token header", 403);
+        return;
+    }
+    var token = headers["auth-token"];
+
+    checkToken("tokens", token, true, function(err, valid, uid) {
+        if(err) {
+            console.log("Could not check user token");
+            respond(response, "Internal service error", 500);
+        }
+        else if(!valid) {
+            setTimeout(function () {
+                respond(response, "Unknown or expired token", 403);
+            }, conf.get("INVALID_PASS_MS_DELAY"));
+        }
+        else
+            checkIsAdmin(uid);
+    });
+
+    function checkIsAdmin(uid) {
+        dbRequestHandler(dbops.getAdminStatusFromDb, [uid], function(err, isAdmin) {
+            if(err) {
+                console.log("Could not check admin status", err);
+                respond(response, "Internal service error", 500);
+            }
+            else if(isAdmin != 1)
+                respond(response, "You don't have permission to do this", 403);
+            else
+                checkUserExists();
+        });
+    }
+
+    function checkUserExists() {
+
+        var m = /^\/userdata\/([\w%.@]*)$/.exec(pathname);
+
+        dbRequestHandler(dbops.getUserUidUsingUsernameFromDb, [m[1]], function(err, userId) {
+            if(err) {
+                console.log("Could not check admin status", err);
+                respond(response, "Internal service error", 500);
+            }
+            else if(!userId)
+                respond(response,"Unknown user", 400);
+            else
+                storeUserdata(userId);
+        });
+    }
+
+    function storeUserdata() {
+        try {
+            var userdata = JSON.parse(body);
+            if(!userdata.instruments)
+                throw "Missing instruments property";
+            
+            userdata = JSON.stringify(userdata);
+        }
+        catch(err) {
+            console.log("Userdata validation error", err);
+            respond(response, "Invalid userdata json", 400);
+            return;
+        }
+        dbRequestHandler(dbops.storeUserDataInDb, userId, userdata, function(err) {
+            if(err) {
+                console.log("Could not save new userdata", err);
+                respond(response, "Internal service error", 500);
+            }
+            else
+                respond(reponse, "Saved", 201);
+        });
+    }
+}
+
 function handleGET(url, headers, body, response) {
     
     url = urlHelper.parse(url);
@@ -383,7 +421,7 @@ function handleGET(url, headers, body, response) {
     console.log("GET request for "+pathname);
 
     if(pathname == "/") {
-        respond(response, GET_DEFAULT_RESPONSE, 200);
+        respond(response, conf.get("GET_DEFAULT_RESPONSE"), 200);
         return;
     }
 
@@ -393,7 +431,7 @@ function handleGET(url, headers, body, response) {
     }
     var token = headers["auth-token"];
 
-    checkToken("users", token, true, function(err, valid, uid) {
+    checkToken("tokens", token, true, function(err, valid, uid) {
         if(err) {
             console.log("Could not check user token");
             respond(response, "Internal service error", 500);
@@ -401,24 +439,63 @@ function handleGET(url, headers, body, response) {
         else if(!valid) {
             setTimeout(function () {
                 respond(response, "Unknown or expired token", 403);
-            }, INVALID_PASS_MS_DELAY);
+            }, conf.get("INVALID_PASS_MS_DELAY"));
         }
+        else if(/^\/userdata(\/[\w%.@]*)?$/.test(pathname))
+            returnUserData(uid, pathname, response);
         else {
             switch(pathname) {
                 case "/userstatus":
-                    response(response, "Authenticated", 200);
+                    returnUserStatus(uid, response);
                     break;
-                case "/userdata":
-                    returnUserData(uid, response);
-                    break;
-                case "unauthenticate":
+                case "/unauthenticate":
                     unauthUser(token, response);
+                    break;
+                case "/users":
+                    returnAllUsers(uid, response);
                     break;
                 default:
                     respond(response, "Unknown GET uri", 404);
             }
         }
     });
+}
+
+function returnUserStatus(uid, response) {
+    dbRequestHandler(dbops.getAdminStatusFromDb, [uid], function(err, isAdmin) {
+        if(err) {
+            console.log("Could not check admin status", err);
+            respond(response, "Internal service error", 500);
+        }
+        else if(isAdmin != 1)
+            respond(response, {'status': 'authenticated'}, 200);
+        else
+            respond(response, {'status': 'admin'}, 200);
+    });
+}
+
+function returnAllUsers(uid, response) {
+    dbRequestHandler(dbops.getAdminStatusFromDb, [uid], function(err, isAdmin) {
+        if(err) {
+            console.log("Could not check admin status", err);
+            respond(response, "Internal service error", 500);
+        }
+        else if(isAdmin != 1)
+            respond(response, "You do not have access to this", 403);
+        else
+            getAllUsers();
+    });
+
+    function getAllUsers() {
+        dbRequestHandler(dbops.getAllUsersFromDb, [], function(err, users) {
+            if(err) {
+                console.log("Could not get all users", err);
+                respond(response, "Internal service error", 500);
+            }
+            else
+                respond(response, {'users': users}, 200);
+        });
+    }
 }
 
 function unauthUser(token, response) {
@@ -429,20 +506,57 @@ function unauthUser(token, response) {
             respond(response, "Internal service error", 500);
         }
         else
-            respond(reponse, "Goodbye", 200);
+            respond(response, "Goodbye", 200);
     });
 
 }
 
-function returnUserData(uid, response) {
-    dbRequestHandler(dbops.getUserDataFromDb, [uid], function(err, userData) {
-        if(err || !userData) {
-            console.log("Could not fetch userdata");
-            respond(response, "Internal service error", 500);
-        }
-        else
-            respond(response, userData, 200);
-    });
+function returnUserData(uid, pathname, response) {
+    
+    var m = /^\/userdata(\/[\w%.@]*)?$/.exec(pathname);
+
+    if(!m[1]) {
+        dbRequestHandler(dbops.getUserDataUsingUidFromDb, [uid], function(err, userData) {
+            if(err || !userData) {
+                console.log("Could not fetch userdata");
+                respond(response, "Internal service error", 500);
+            }
+            else
+                respond(response, userData, 200);
+        });
+    }
+    else
+        checkIsAdmin();
+
+    function checkIsAdmin() {
+        dbRequestHandler(dbops.getAdminStatusFromDb, [uid], function(err, isAdmin) {
+            if(err) {
+                console.log("Could not check admin status", err);
+                respond(response, "Internal service error", 500);
+            }
+            else if(isAdmin != 1)
+                respond(response, "You don't have access to this", 403);
+            else
+                returnUserDataUsingusername();
+        });
+    }
+
+    function returnUserDataUsingusername() {
+
+        var username = m[1].substr(1);
+        console.log("return userdata for "+username);
+
+        dbRequestHandler(dbops.getUserDataUsingUsernameFromDb, [username], function(err, userData) {
+            if(err) {
+                console.log("Could not fetch userdata");
+                respond(response, "Internal service error", 500);
+            }
+            else if(!userData)
+                respond(response, "Unknown user", 400);
+            else
+                respond(response, userData, 200);
+        });
+    }
 }
 
 function checkToken(table, token, extendValidity, callback) {
@@ -458,7 +572,7 @@ function checkToken(table, token, extendValidity, callback) {
     });
 
     function extendTokenValidity(uid) {
-        var validity = Date.now() + TOKEN_VALIDITY_MS;
+        var validity = Date.now() + conf.get("TOKEN_VALIDITY_MS");
         dbRequestHandler(dbops.storeUserTokenValidityInDb, [token, validity], function(err) {
             if(err)
                 callback(err);
@@ -472,7 +586,8 @@ function dbRequestHandler(func, funcArgs, callback) {
     
     // We use a new db object for every transaction to assure isolation
     // See https://github.com/mapbox/node-sqlite3/issues/304
-    var db = new sqlite3.Database(DB_NAME);
+    var db = new sqlite3.Database(conf.get("DB_NAME"));
+    db.configure("busyTimeout", conf.get("BUSY_TIMEOUT"));
     func(db, ...funcArgs, function(cbArgs) { //note ... -> spread operator (I know, right?)
         db.close();
         callback(...cbArgs);

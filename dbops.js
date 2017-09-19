@@ -27,8 +27,21 @@ module.exports = {
         });
     },
 
-    getUserDataFromDb: function(db, uid, callback) {
+    getUserDataUsingUidFromDb: function(db, uid, callback) {
         db.get("SELECT userdata FROM usersdata WHERE uid = ?", uid, function(err, row) {
+            if(err) {
+                console.log(err);
+                callback([err]);
+            }
+            else if(!row)
+                callback([]);
+            else
+                callback([null, row.userdata]);
+        });
+    },
+
+    getUserDataUsingUsernameFromDb: function(db, username, callback) {
+        db.get("SELECT userdata FROM usersdata WHERE uid = (SELECT uid FROM users WHERE username = ?)", username, function(err, row) {
             if(err) {
                 console.log(err);
                 callback([err]);
@@ -66,6 +79,36 @@ module.exports = {
         });
     },
 
+    getAdminStatusFromDb: function(db, uid, callback) {
+        db.get("SELECT admin FROM users WHERE uid = ?", uid, function(err, row) {
+            if(err) {
+                console.log(err);
+                callback([err]);
+            }
+            else if(!row)
+                callback([]);
+            else
+                callback([null, row.admin]);
+        });
+    },
+
+    getAllUsersFromDb: function(db, callback) {
+        var result = [];
+        db.each("SELECT username FROM users LIMIT 300", [], function(err,row) {
+            if(err) {
+                console.log(err);
+                callback([err]);
+            }
+            else result.push(row.username);
+        }, function(err,nrows) {
+            if(err) {
+                console.log(err);
+                callback([err]);
+            }
+            else callback([null,result]);
+        });
+    },
+
     storeTokenInDb: function(db, table, uid, token, validity, callback) {
         db.run("UPDATE "+table+" SET token = ?, validity = ? WHERE uid = ?", token, validity, uid, function(err) {
             if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
@@ -88,5 +131,13 @@ module.exports = {
             if(err) console.log(err);
             callback([err]);
         })
+    },
+
+    storeUserDataInDb: function(db, uid, userdata, callback) {
+        db.run("UPDATE usersdata SET userdata = ? WHERE uid = ?", userdata, uid, function(err) {
+            if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
+            if(err) console.log(err);
+            callback([err]);
+        });
     }
 }
