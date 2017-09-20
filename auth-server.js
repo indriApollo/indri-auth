@@ -156,7 +156,7 @@ function handleAuthentication(json, response) {
     var username = checkedJson.jsonData.username;
     var password = checkedJson.jsonData.password;
 
-    dbRequestHandler(dbops.getUserHashFromDb, [username], function(err, uid, hash) {
+    dbRequestHandler(dbops.getUserHashFromDb, username, function(err, uid, hash) {
 
         if(err)
             respond(response, "Internal service error", 500);
@@ -186,7 +186,7 @@ function handleAuthentication(json, response) {
         var token = crypto.randomBytes(conf.get("TOKEN_BYTE_LENGTH")).toString("base64");
         var validity = Date.now() + conf.get("TOKEN_VALIDITY_MS");
 
-        dbRequestHandler(dbops.storeTokenInDb, ["tokens",uid,token,validity], function(err) {
+        dbRequestHandler(dbops.storeTokenInDb, "tokens", uid, token, validity, function(err) {
             if(err)
                 respond(response, "Internal service error", 500);
             else
@@ -206,7 +206,7 @@ function handlePassResetRequest(json, response) {
     var email = checkedJson.jsonData.email;
     var domain = checkedJson.jsonData.domain;
 
-    dbRequestHandler(dbops.getUserUidUsingUsernameFromDb, [email], function(err, uid) {
+    dbRequestHandler(dbops.getUserUidUsingUsernameFromDb, email, function(err, uid) {
         if(err) {
             console.log("Could not check user's existence");
             respond(response, "Internal service error", 500);
@@ -218,7 +218,7 @@ function handlePassResetRequest(json, response) {
     });
 
     function getPassResetUrl(uid) {
-        dbRequestHandler(dbops.getTrustedUrlsFromDb, [domain], function(err, reseturi) {
+        dbRequestHandler(dbops.getTrustedUrlsFromDb, domain, function(err, reseturi) {
             if(err) {
                 console.log("Could not get pass reset url");
                 respond(response, "Internal service error", 500);
@@ -236,7 +236,7 @@ function handlePassResetRequest(json, response) {
         var validity = Date.now() + TOKEN_VALIDITY_MS;
         url+="#"+encodeURIComponent(token); // we encode to token to avoid problems with special chars in the url like +
     
-        dbRequestHandler(dbops.storeTokenInDb, ["passreset",uid,token,validity], function(err) {
+        dbRequestHandler(dbops.storeTokenInDb, "passreset", uid, token, validity, function(err) {
             if(err)
                 respond(response, "Internal service error", 500);
             else
@@ -274,20 +274,7 @@ function saveNewUserPassword(headers, json, response) {
     }
     var token = headers["auth-token"];
 
-    checkToken("passreset", token, false, function(err, valid, uid) {
-        if(err) {
-            console.log("Could not check passreset token");
-            respond(response, "Internal service error", 500);
-        }
-        else if(!valid) {
-            setTimeout(function () {
-                respond(response, "Unknown or expired token", 403);
-            }, conf.get(INVALID_PASS_MS_DELAY));
-        }
-        else {
-            checkPasswordFromJson(uid);
-        }
-    });
+    checkToken(response, "passreset", token, false, checkPasswordFromJson(uid) );
 
     function checkPasswordFromJson(uid) {
         var checkedJson = checkJson(json, ["password"]);
@@ -305,7 +292,7 @@ function saveNewUserPassword(headers, json, response) {
     }
 
     function nukeUsedResetToken(uid, password) {
-        dbRequestHandler(dbops.storeTokenInDb, ["passreset", uid, "xxx", 0], function(err) {
+        dbRequestHandler(dbops.storeTokenInDb, "passreset", uid, "xxx", 0, function(err) {
             if(err) {
                 console.log("Could not nuke used resetToken");
                 respond(response, "Internal service error", 500);
@@ -327,7 +314,7 @@ function saveNewUserPassword(headers, json, response) {
     }
 
     function storeHash(uid, hash) {
-        dbRequestHandler(dbops.storeUserHashInDb, [uid, hash], function(err) {
+        dbRequestHandler(dbops.storeUserHashInDb, uid, hash, function(err) {
             if(err) {
                 console.log("Could not store new user hash");
                 respond(response, "Internal service error", 500);
@@ -346,38 +333,15 @@ function saveNewUserdata(response, pathname, headers, body) {
     }
     var token = headers["auth-token"];
 
-    checkToken("tokens", token, true, function(err, valid, uid) {
-        if(err) {
-            console.log("Could not check user token");
-            respond(response, "Internal service error", 500);
-        }
-        else if(!valid) {
-            setTimeout(function () {
-                respond(response, "Unknown or expired token", 403);
-            }, conf.get("INVALID_PASS_MS_DELAY"));
-        }
-        else
-            checkIsAdmin(uid);
+    checkToken(response, "tokens", token, true, function(uid) {
+        checkIsAdmin(response, uid, checkUserExists);
     });
-
-    function checkIsAdmin(uid) {
-        dbRequestHandler(dbops.getAdminStatusFromDb, [uid], function(err, isAdmin) {
-            if(err) {
-                console.log("Could not check admin status", err);
-                respond(response, "Internal service error", 500);
-            }
-            else if(isAdmin != 1)
-                respond(response, "You don't have permission to do this", 403);
-            else
-                checkUserExists();
-        });
-    }
 
     function checkUserExists() {
 
         var m = /^\/userdata\/([\w%.@]*)$/.exec(pathname);
 
-        dbRequestHandler(dbops.getUserUidUsingUsernameFromDb, [m[1]], function(err, userId) {
+        dbRequestHandler(dbops.getUserUidUsingUsernameFromDb, m[1], function(err, userId) {
             if(err) {
                 console.log("Could not check admin status", err);
                 respond(response, "Internal service error", 500);
@@ -431,38 +395,32 @@ function handleGET(url, headers, body, response) {
     }
     var token = headers["auth-token"];
 
-    checkToken("tokens", token, true, function(err, valid, uid) {
-        if(err) {
-            console.log("Could not check user token");
-            respond(response, "Internal service error", 500);
-        }
-        else if(!valid) {
-            setTimeout(function () {
-                respond(response, "Unknown or expired token", 403);
-            }, conf.get("INVALID_PASS_MS_DELAY"));
-        }
-        else if(/^\/userdata(\/[\w%.@]*)?$/.test(pathname))
+    checkToken(response, "tokens", token, true, function(uid) {
+        
+        if(/^\/userdata(\/[\w%.@]*)?$/.test(pathname)) {
             returnUserData(uid, pathname, response);
-        else {
-            switch(pathname) {
-                case "/userstatus":
-                    returnUserStatus(uid, response);
-                    break;
-                case "/unauthenticate":
-                    unauthUser(token, response);
-                    break;
-                case "/users":
-                    returnAllUsers(uid, response);
-                    break;
-                default:
-                    respond(response, "Unknown GET uri", 404);
-            }
+            return;
+        }
+        
+        switch(pathname) {
+            case "/userstatus":
+                returnUserStatus(uid, response);
+                break;
+            case "/unauthenticate":
+                unauthUser(token, response);
+                break;
+            case "/users":
+                returnAllUsers(uid, response);
+                break;
+            default:
+                respond(response, "Unknown GET uri", 404);
+                break;
         }
     });
 }
 
 function returnUserStatus(uid, response) {
-    dbRequestHandler(dbops.getAdminStatusFromDb, [uid], function(err, isAdmin) {
+    dbRequestHandler(dbops.getAdminStatusFromDb, uid, function(err, isAdmin) {
         if(err) {
             console.log("Could not check admin status", err);
             respond(response, "Internal service error", 500);
@@ -475,7 +433,7 @@ function returnUserStatus(uid, response) {
 }
 
 function returnAllUsers(uid, response) {
-    dbRequestHandler(dbops.getAdminStatusFromDb, [uid], function(err, isAdmin) {
+    dbRequestHandler(dbops.getAdminStatusFromDb, uid, function(err, isAdmin) {
         if(err) {
             console.log("Could not check admin status", err);
             respond(response, "Internal service error", 500);
@@ -487,7 +445,7 @@ function returnAllUsers(uid, response) {
     });
 
     function getAllUsers() {
-        dbRequestHandler(dbops.getAllUsersFromDb, [], function(err, users) {
+        dbRequestHandler(dbops.getAllUsersFromDb, null, function(err, users) {
             if(err) {
                 console.log("Could not get all users", err);
                 respond(response, "Internal service error", 500);
@@ -500,7 +458,7 @@ function returnAllUsers(uid, response) {
 
 function unauthUser(token, response) {
     // Set the validity to zero. Checktoken will then always fail.
-    dbRequestHandler(dbops.storeUserTokenValidityInDb, [token, 0], function(err) {
+    dbRequestHandler(dbops.storeUserTokenValidityInDb, token, 0, function(err) {
         if(err) {
             console.log("Could not unauthenticate user", err);
             respond(response, "Internal service error", 500);
@@ -516,7 +474,7 @@ function returnUserData(uid, pathname, response) {
     var m = /^\/userdata(\/[\w%.@]*)?$/.exec(pathname);
 
     if(!m[1]) {
-        dbRequestHandler(dbops.getUserDataUsingUidFromDb, [uid], function(err, userData) {
+        dbRequestHandler(dbops.getUserDataUsingUidFromDb, uid, function(err, userData) {
             if(err || !userData) {
                 console.log("Could not fetch userdata");
                 respond(response, "Internal service error", 500);
@@ -526,27 +484,14 @@ function returnUserData(uid, pathname, response) {
         });
     }
     else
-        checkIsAdmin();
-
-    function checkIsAdmin() {
-        dbRequestHandler(dbops.getAdminStatusFromDb, [uid], function(err, isAdmin) {
-            if(err) {
-                console.log("Could not check admin status", err);
-                respond(response, "Internal service error", 500);
-            }
-            else if(isAdmin != 1)
-                respond(response, "You don't have access to this", 403);
-            else
-                returnUserDataUsingusername();
-        });
-    }
+        checkIsAdmin(response, uid, returnUserDataUsingusername);
 
     function returnUserDataUsingusername() {
 
         var username = m[1].substr(1);
         console.log("return userdata for "+username);
 
-        dbRequestHandler(dbops.getUserDataUsingUsernameFromDb, [username], function(err, userData) {
+        dbRequestHandler(dbops.getUserDataUsingUsernameFromDb, username, function(err, userData) {
             if(err) {
                 console.log("Could not fetch userdata");
                 respond(response, "Internal service error", 500);
@@ -559,36 +504,57 @@ function returnUserData(uid, pathname, response) {
     }
 }
 
-function checkToken(table, token, extendValidity, callback) {
-    dbRequestHandler(dbops.getTokenValidityFromDb, [table,token], function(err, validity, uid) {
-        if(err)
-            callback(err);
-        else if(!validity || (validity < Date.now()) )
-            callback(null, false);
-        else if(!extendValidity)
-            callback(null, true, uid);
+function checkToken(response, table, token, extendValidity, callback) {
+
+    dbRequestHandler(dbops.getTokenValidityFromDb, table, token, function(err, validity, uid) {
+        if(err) {
+            console.log("Could not check token from", table);
+            respond(response, "Internal service error", 500);
+        }
+        else if( !validity || ( validity < Date.now() ) ) {
+            setTimeout(function () {
+                respond(response, "Unknown or expired token", 403);
+            }, conf.get(INVALID_PASS_MS_DELAY));
+        }
+        else if(!extendTokenValidity)
+            callback(uid);
         else
             extendTokenValidity(uid);
     });
 
     function extendTokenValidity(uid) {
         var validity = Date.now() + conf.get("TOKEN_VALIDITY_MS");
-        dbRequestHandler(dbops.storeUserTokenValidityInDb, [token, validity], function(err) {
-            if(err)
-                callback(err);
+        dbRequestHandler(dbops.storeUserTokenValidityInDb, token, validity, function(err) {
+            if(err) {
+                console.log("Could not extend token from", table);
+                respond(response, "Internal service error", 500);
+            }
             else
-                callback(null, true, uid);
+                callback(uid);
         });
     }
 }
 
-function dbRequestHandler(func, funcArgs, callback) {
-    
+function checkIsAdmin(response, uid, callback) {
+    dbRequestHandler(dbops.getAdminStatusFromDb, uid, function(err, isAdmin) {
+        if(err) {
+            console.log("Could not check admin status", err);
+            respond(response, "Internal service error", 500);
+        }
+        else if(isAdmin != 1)
+            respond(response, "You don't have access to this", 403);
+        else
+            callback();
+    });
+}
+
+function dbRequestHandler(func, ...funcArgs) {
+    const callback = funcArgs.pop(); // last arg should be callback
     // We use a new db object for every transaction to assure isolation
     // See https://github.com/mapbox/node-sqlite3/issues/304
     var db = new sqlite3.Database(conf.get("DB_NAME"));
     db.configure("busyTimeout", conf.get("BUSY_TIMEOUT"));
-    func(db, ...funcArgs, function(cbArgs) { //note ... -> spread operator (I know, right?)
+    func(db, ...funcArgs, function(...cbArgs) { //note ... -> spread operator (I know, right?)
         db.close();
         callback(...cbArgs);
     });

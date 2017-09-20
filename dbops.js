@@ -5,12 +5,12 @@ module.exports = {
         db.get("SELECT uid, hash FROM users WHERE username = ?", username, function(err, row) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
             else if(!row)
-                callback([]);
+                callback();
             else
-                callback([null, row.uid, row.hash]);
+                callback(null, row.uid, row.hash);
         })
     },
 
@@ -18,12 +18,12 @@ module.exports = {
         db.get("SELECT uid,validity FROM "+table+" WHERE token = ?", token, function(err, row) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
             else if(!row)
-                callback([]);
+                callback();
             else 
-                callback([null, row.validity, row.uid]);
+                callback(null, row.validity, row.uid);
         });
     },
 
@@ -31,12 +31,12 @@ module.exports = {
         db.get("SELECT userdata FROM usersdata WHERE uid = ?", uid, function(err, row) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
             else if(!row)
-                callback([]);
+                callback();
             else
-                callback([null, row.userdata]);
+                callback(null, row.userdata);
         });
     },
 
@@ -44,12 +44,12 @@ module.exports = {
         db.get("SELECT userdata FROM usersdata WHERE uid = (SELECT uid FROM users WHERE username = ?)", username, function(err, row) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
             else if(!row)
-                callback([]);
+                callback();
             else
-                callback([null, row.userdata]);
+                callback(null, row.userdata);
         });
     },
 
@@ -57,12 +57,12 @@ module.exports = {
         db.get("SELECT reseturi FROM trustedurls WHERE domain = ?", domain, function(err, row) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
             else if(!row)
-                callback([]);
+                callback();
             else
-                callback([null, row.reseturi]);
+                callback(null, row.reseturi);
         });
     },
 
@@ -70,12 +70,12 @@ module.exports = {
         db.get("SELECT uid FROM users WHERE username = ?", username, function(err, row) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
             else if(!row)
-                callback([]);
+                callback();
             else
-                callback([null, row.uid]);
+                callback(null, row.uid);
         });
     },
 
@@ -83,12 +83,12 @@ module.exports = {
         db.get("SELECT admin FROM users WHERE uid = ?", uid, function(err, row) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
             else if(!row)
-                callback([]);
+                callback();
             else
-                callback([null, row.admin]);
+                callback(null, row.admin);
         });
     },
 
@@ -97,15 +97,15 @@ module.exports = {
         db.each("SELECT username FROM users LIMIT 300", [], function(err,row) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
             else result.push(row.username);
         }, function(err,nrows) {
             if(err) {
                 console.log(err);
-                callback([err]);
+                callback(err);
             }
-            else callback([null,result]);
+            else callback(null,result);
         });
     },
 
@@ -113,7 +113,7 @@ module.exports = {
         db.run("UPDATE "+table+" SET token = ?, validity = ? WHERE uid = ?", token, validity, uid, function(err) {
             if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
             if(err) console.log(err);
-            callback([err]);
+            callback(err);
         })
     },
 
@@ -121,7 +121,7 @@ module.exports = {
         db.run("UPDATE users SET hash = ? WHERE uid = ?", hash, uid, function(err) {
             if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
             if(err) console.log(err);
-            callback([err]);
+            callback(err);
         })
     },
 
@@ -129,7 +129,7 @@ module.exports = {
         db.run("UPDATE tokens SET validity = ? WHERE token = ?", validity, token, function(err) {
             if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
             if(err) console.log(err);
-            callback([err]);
+            callback(err);
         })
     },
 
@@ -137,7 +137,7 @@ module.exports = {
         db.run("UPDATE usersdata SET userdata = ? WHERE uid = ?", userdata, uid, function(err) {
             if(!err && this.changes !== 1) err = this.sql+" was run successfully but made no changes";
             if(err) console.log(err);
-            callback([err]);
+            callback(err);
         });
     }
 }
