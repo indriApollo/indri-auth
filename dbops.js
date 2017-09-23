@@ -105,7 +105,8 @@ module.exports = {
                 console.log(err);
                 callback(err);
             }
-            else callback(null,result);
+            else
+                callback(null,result);
         });
     },
 

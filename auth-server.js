@@ -233,7 +233,7 @@ function handlePassResetRequest(json, response) {
 
     function generatePassResetToken(uid, url) {
         var token = crypto.randomBytes(conf.get("TOKEN_BYTE_LENGTH")).toString("base64");
-        var validity = Date.now() + TOKEN_VALIDITY_MS;
+        var validity = Date.now() + conf.get("TOKEN_VALIDITY_MS");
         url+="#"+encodeURIComponent(token); // we encode to token to avoid problems with special chars in the url like +
     
         dbRequestHandler(dbops.storeTokenInDb, "passreset", uid, token, validity, function(err) {
@@ -353,7 +353,7 @@ function saveNewUserdata(response, pathname, headers, body) {
         });
     }
 
-    function storeUserdata() {
+    function storeUserdata(userId) {
         try {
             var userdata = JSON.parse(body);
             if(!userdata.instruments)
@@ -372,7 +372,7 @@ function saveNewUserdata(response, pathname, headers, body) {
                 respond(response, "Internal service error", 500);
             }
             else
-                respond(reponse, "Saved", 201);
+                respond(response, "Saved", 201);
         });
     }
 }
@@ -445,7 +445,7 @@ function returnAllUsers(uid, response) {
     });
 
     function getAllUsers() {
-        dbRequestHandler(dbops.getAllUsersFromDb, null, function(err, users) {
+        dbRequestHandler(dbops.getAllUsersFromDb, function(err, users) {
             if(err) {
                 console.log("Could not get all users", err);
                 respond(response, "Internal service error", 500);
@@ -514,7 +514,7 @@ function checkToken(response, table, token, extendValidity, callback) {
         else if( !validity || ( validity < Date.now() ) ) {
             setTimeout(function () {
                 respond(response, "Unknown or expired token", 403);
-            }, conf.get(INVALID_PASS_MS_DELAY));
+            }, conf.get("INVALID_PASS_MS_DELAY"));
         }
         else if(!extendTokenValidity)
             callback(uid);
