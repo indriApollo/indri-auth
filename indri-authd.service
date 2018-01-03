@@ -1,0 +1,15 @@
+[Unit]
+Description=indri authentication service
+Requires=apache2.service
+
+[Service]
+WorkingDirectory=/home/raphael/indri-auth
+ExecStart=/usr/bin/node auth-server.js
+Restart=always
+RestartSec=1
+SyslogIdentifier=indri-authd
+User=raphael
+
+[Install]
+WantedBy=multi-user.target
+
