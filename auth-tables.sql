@@ -33,6 +33,6 @@ create table trustedurls(
 create trigger users_trigger after insert ON users
 begin
     insert into tokens (uid) values (last_insert_rowid());
-    insert into usersdata (uid,userdata) values (last_insert_rowid(),"{}");
+    insert into usersdata (uid,userdata) values (last_insert_rowid(),'{"instruments": []}');
     insert into passreset (uid) values (last_insert_rowid());
 end;
